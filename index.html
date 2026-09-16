@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1f6d4b">
+  <meta name="description" content="手机照片膜样品RGB区域分析与实验数据记录">
+  <title>膜色 RGB</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>膜色 RGB</h1>
+      <p id="privacyStatus">照片在本机处理</p>
+    </div>
+    <button id="installButton" class="button secondary" type="button" hidden>安装应用</button>
+  </header>
+
+  <main>
+    <section class="capture-section" aria-labelledby="captureTitle">
+      <div class="section-heading">
+        <div>
+          <h2 id="captureTitle">照片分析</h2>
+          <p id="imageStatus" aria-live="polite">请选择手机原图</p>
+        </div>
+        <div class="file-actions">
+          <label class="button primary" for="cameraInput">拍照</label>
+          <input id="cameraInput" class="visually-hidden" type="file" accept="image/*" capture="environment">
+          <label class="button secondary" for="galleryInput">选择照片</label>
+          <input id="galleryInput" class="visually-hidden" type="file" accept="image/*">
+        </div>
+      </div>
+
+      <div class="workspace-grid">
+        <div class="image-column">
+          <div id="canvasStage" class="canvas-stage">
+            <canvas id="photoCanvas" aria-label="照片和取样区域"></canvas>
+            <div id="emptyState" class="empty-state">拍照或选择照片后开始</div>
+          </div>
+
+          <div class="roi-toolbar" aria-label="区域选择">
+            <div class="segmented" role="group" aria-label="选择区域类型">
+              <button class="segment active" type="button" data-roi-mode="sample" aria-pressed="true">样品</button>
+              <button class="segment" type="button" data-roi-mode="white" aria-pressed="false">白板</button>
+              <button class="segment" type="button" data-roi-mode="dark" aria-pressed="false">暗场</button>
+            </div>
+            <button id="resetRoiButton" class="button secondary compact" type="button" disabled>重置当前区域</button>
+            <button id="clearRoiButton" class="button secondary compact" type="button" disabled>清除当前区域</button>
+          </div>
+
+          <div class="roi-readouts" aria-label="区域RGB读数">
+            <div><span>样品</span><strong id="sampleRoiValue">--</strong></div>
+            <div><span>白板</span><strong id="whiteRoiValue">未选择</strong></div>
+            <div><span>暗场</span><strong id="darkRoiValue">未选择</strong></div>
+          </div>
+        </div>
+
+        <aside class="results-column" aria-label="RGB结果">
+          <div class="result-block">
+            <div class="result-heading">
+              <h3>样品平均RGB</h3>
+              <span id="samplePixelCount">--</span>
+            </div>
+            <div class="rgb-values" id="rawRgbValues">
+              <div class="rgb-channel red"><span>R</span><strong id="rawR">--</strong></div>
+              <div class="rgb-channel green"><span>G</span><strong id="rawG">--</strong></div>
+              <div class="rgb-channel blue"><span>B</span><strong id="rawB">--</strong></div>
+            </div>
+            <div class="color-row">
+              <span id="rawSwatch" class="color-swatch" aria-hidden="true"></span>
+              <span id="rawRgbText">RGB(--, --, --)</span>
+            </div>
+          </div>
+
+          <div class="result-block">
+            <div class="result-heading">
+              <h3>黑白校正RGB</h3>
+              <span id="correctionStatus">需要白板区域</span>
+            </div>
+            <div class="rgb-values">
+              <div class="rgb-channel red"><span>R</span><strong id="correctedR">--</strong></div>
+              <div class="rgb-channel green"><span>G</span><strong id="correctedG">--</strong></div>
+              <div class="rgb-channel blue"><span>B</span><strong id="correctedB">--</strong></div>
+            </div>
+            <div class="color-row">
+              <span id="correctedSwatch" class="color-swatch" aria-hidden="true"></span>
+              <span id="correctedRgbText">RGB(--, --, --)</span>
+            </div>
+          </div>
+
+          <details class="metadata-block" open>
+            <summary>照片参数</summary>
+            <dl id="metadataList" class="metadata-list">
+              <div><dt>文件</dt><dd>--</dd></div>
+            </dl>
+          </details>
+        </aside>
+      </div>
+    </section>
+
+    <section class="experiment-section" aria-labelledby="experimentTitle">
+      <div class="section-heading simple">
+        <div>
+          <h2 id="experimentTitle">实验记录</h2>
+          <p>保存当前取色结果和检测条件</p>
+        </div>
+      </div>
+
+      <form id="experimentForm" class="experiment-form">
+        <label>
+          <span>Cu浓度（ppm）</span>
+          <input id="cuConcentration" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="0.0000">
+        </label>
+        <label>
+          <span>光源</span>
+          <select id="lightSource">
+            <option value="外置LED">外置LED</option>
+            <option value="板载LED">板载LED</option>
+            <option value="环境光">环境光</option>
+          </select>
+        </label>
+        <label>
+          <span>标称色温（K）</span>
+          <input id="lightCct" type="number" min="1000" max="20000" step="50" inputmode="numeric" placeholder="例如 4150">
+        </label>
+        <label>
+          <span>LED PWM亮度（%）</span>
+          <input id="lightBrightness" type="number" min="1" max="100" step="1" inputmode="numeric" placeholder="例如 60">
+        </label>
+        <label>
+          <span>样品状态</span>
+          <select id="sampleState">
+            <option value="湿态">湿态</option>
+            <option value="干态">干态</option>
+          </select>
+        </label>
+        <label class="notes-field">
+          <span>备注</span>
+          <input id="notes" type="text" maxlength="120" placeholder="样品编号、反应时间等">
+        </label>
+        <button id="saveRecordButton" class="button primary save-button" type="submit" disabled>保存本次数据</button>
+      </form>
+    </section>
+
+    <section class="history-section" aria-labelledby="historyTitle">
+      <div class="section-heading">
+        <div>
+          <h2 id="historyTitle">本地记录</h2>
+          <p id="historyCount">0条数据</p>
+        </div>
+        <div class="history-actions">
+          <button id="exportButton" class="button secondary" type="button" disabled>导出CSV</button>
+          <button id="clearHistoryButton" class="button danger" type="button" disabled>清空记录</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>Cu（ppm）</th>
+              <th>原始RGB</th>
+              <th>校正RGB</th>
+              <th>光源</th>
+              <th>色温</th>
+              <th>亮度</th>
+              <th>手机</th>
+              <th><span class="visually-hidden">操作</span></th>
+            </tr>
+          </thead>
+          <tbody id="historyBody">
+            <tr class="empty-row"><td colspan="9">暂无记录</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

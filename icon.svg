@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 512 512" role="img" aria-label="膜色RGB图标">
+  <rect width="512" height="512" rx="92" fill="#1f6d4b"/>
+  <circle cx="256" cy="256" r="150" fill="#f5f7f5"/>
+  <path d="M256 118a138 138 0 0 1 119 68l-119 70Z" fill="#c9453d"/>
+  <path d="M375 186a138 138 0 0 1 0 140l-119-70Z" fill="#2f8a57"/>
+  <path d="M375 326a138 138 0 0 1-238 0l119-70Z" fill="#3478b8"/>
+  <path d="M137 326a138 138 0 0 1 119-208v138Z" fill="#e78032"/>
+  <circle cx="256" cy="256" r="54" fill="#202622"/>
+  <circle cx="256" cy="256" r="24" fill="#f5f7f5"/>
+</svg>
