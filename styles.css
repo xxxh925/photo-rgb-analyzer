@@ -251,6 +251,14 @@ summary:focus-visible {
   margin-top: 10px;
 }
 
+.shape-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .segmented {
   display: inline-grid;
   grid-template-columns: repeat(3, minmax(68px, 1fr));
@@ -276,6 +284,10 @@ summary:focus-visible {
 .segment.active {
   color: var(--accent-text);
   background: var(--accent);
+}
+
+.shape-segmented {
+  grid-template-columns: repeat(2, minmax(58px, 1fr));
 }
 
 .roi-readouts {
@@ -370,6 +382,18 @@ summary:focus-visible {
 
 .rgb-channel.blue {
   border-top-color: var(--blue);
+}
+
+.rgb-channel.lab-lightness {
+  border-top-color: #7b8580;
+}
+
+.rgb-channel.lab-a {
+  border-top-color: #ad4e74;
+}
+
+.rgb-channel.lab-b {
+  border-top-color: #b48a22;
 }
 
 .rgb-channel span,
@@ -584,8 +608,17 @@ th {
     align-items: stretch;
   }
 
-  .segmented {
+  .roi-toolbar > .segmented {
     width: 100%;
+  }
+
+  .shape-control {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .shape-segmented {
+    width: min(190px, 65%);
   }
 
   .roi-toolbar > .button {

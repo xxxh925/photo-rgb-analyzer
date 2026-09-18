@@ -14,6 +14,7 @@ const elements = {
   resetRoiButton: document.getElementById("resetRoiButton"),
   clearRoiButton: document.getElementById("clearRoiButton"),
   roiModeButtons: [...document.querySelectorAll("[data-roi-mode]")],
+  sampleShapeButtons: [...document.querySelectorAll("[data-sample-shape]")],
   sampleRoiValue: document.getElementById("sampleRoiValue"),
   whiteRoiValue: document.getElementById("whiteRoiValue"),
   darkRoiValue: document.getElementById("darkRoiValue"),
@@ -29,9 +30,12 @@ const elements = {
   correctedRgbText: document.getElementById("correctedRgbText"),
   correctedSwatch: document.getElementById("correctedSwatch"),
   correctionStatus: document.getElementById("correctionStatus"),
+  labL: document.getElementById("labL"),
+  labA: document.getElementById("labA"),
+  labB: document.getElementById("labB"),
+  labStatus: document.getElementById("labStatus"),
   metadataList: document.getElementById("metadataList"),
   experimentForm: document.getElementById("experimentForm"),
-  cuConcentration: document.getElementById("cuConcentration"),
   lightSource: document.getElementById("lightSource"),
   lightCct: document.getElementById("lightCct"),
   lightBrightness: document.getElementById("lightBrightness"),
@@ -58,6 +62,7 @@ const state = {
   file: null,
   metadata: {},
   activeMode: "sample",
+  sampleShape: "rect",
   rois: {
     sample: null,
     white: null,
@@ -130,6 +135,50 @@ function normalizedRect(rect) {
   );
 
   return { x1, y1, x2, y2 };
+}
+
+function inscribedSquare(rect) {
+  const normalized = normalizedRect(rect);
+  if (!normalized) {
+    return null;
+  }
+
+  const centerX = (normalized.x1 + normalized.x2) / 2;
+  const centerY = (normalized.y1 + normalized.y2) / 2;
+  const side = Math.min(
+    normalized.x2 - normalized.x1,
+    normalized.y2 - normalized.y1
+  );
+
+  return normalizedRect({
+    x1: centerX - side / 2,
+    y1: centerY - side / 2,
+    x2: centerX + side / 2,
+    y2: centerY + side / 2
+  });
+}
+
+function circleRectFromCenter(center, edge, minimumRadius = 1) {
+  const width = elements.canvas.width;
+  const height = elements.canvas.height;
+  const centerX = clamp(center.x, 1, width - 1);
+  const centerY = clamp(center.y, 1, height - 1);
+  const maxRadius = Math.max(
+    1,
+    Math.min(centerX, width - centerX, centerY, height - centerY)
+  );
+  const radius = clamp(
+    Math.max(minimumRadius, Math.hypot(edge.x - centerX, edge.y - centerY)),
+    1,
+    maxRadius
+  );
+
+  return normalizedRect({
+    x1: centerX - radius,
+    y1: centerY - radius,
+    x2: centerX + radius,
+    y2: centerY + radius
+  });
 }
 
 function eventCanvasPoint(event) {
@@ -206,7 +255,21 @@ function drawRoi(mode, roi) {
 
   drawingContext.strokeStyle = colors[mode];
   drawingContext.lineWidth = lineWidth;
-  drawingContext.strokeRect(x, y, width, height);
+  if (mode === "sample" && state.sampleShape === "circle") {
+    drawingContext.beginPath();
+    drawingContext.ellipse(
+      x + width / 2,
+      y + height / 2,
+      width / 2,
+      height / 2,
+      0,
+      0,
+      Math.PI * 2
+    );
+    drawingContext.stroke();
+  } else {
+    drawingContext.strokeRect(x, y, width, height);
+  }
 
   const fontSize = Math.max(16, Math.round(16 * scale));
   drawingContext.font = `600 ${fontSize}px sans-serif`;
@@ -246,7 +309,7 @@ function drawCanvas() {
   }
 }
 
-function meanRgb(rect) {
+function meanRgb(rect, shape = "rect") {
   const roi = normalizedRect(rect);
   if (!roi) {
     return null;
@@ -262,7 +325,23 @@ function meanRgb(rect) {
   let blue = 0;
   let count = 0;
 
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const radiusX = width / 2;
+  const radiusY = height / 2;
+
   for (let index = 0; index < pixels.length; index += 4) {
+    if (shape === "circle") {
+      const pixelIndex = index / 4;
+      const pixelX = pixelIndex % width + 0.5;
+      const pixelY = Math.floor(pixelIndex / width) + 0.5;
+      const normalizedX = (pixelX - centerX) / radiusX;
+      const normalizedY = (pixelY - centerY) / radiusY;
+      if (normalizedX ** 2 + normalizedY ** 2 > 1) {
+        continue;
+      }
+    }
+
     if (pixels[index + 3] === 0) {
       continue;
     }
@@ -332,19 +411,85 @@ function correctedRgb(sample, white, dark) {
   return output;
 }
 
+function rgbToLab(rgb) {
+  if (!rgb) {
+    return null;
+  }
+
+  const linearize = (channel) => {
+    const value = channel / 255;
+    return value <= 0.04045
+      ? value / 12.92
+      : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const red = linearize(rgb.r);
+  const green = linearize(rgb.g);
+  const blue = linearize(rgb.b);
+  const x = 0.4124564 * red + 0.3575761 * green + 0.1804375 * blue;
+  const y = 0.2126729 * red + 0.7151522 * green + 0.0721750 * blue;
+  const z = 0.0193339 * red + 0.1191920 * green + 0.9503041 * blue;
+  const delta = 6 / 29;
+  const transform = (value) => value > delta ** 3
+    ? Math.cbrt(value)
+    : value / (3 * delta ** 2) + 4 / 29;
+  const fx = transform(x / 0.95047);
+  const fy = transform(y);
+  const fz = transform(z / 1.08883);
+
+  return {
+    l: 116 * fy - 16,
+    a: 500 * (fx - fy),
+    b: 200 * (fy - fz)
+  };
+}
+
+function labNumber(value) {
+  if (!Number.isFinite(value)) {
+    return "--";
+  }
+  return Math.abs(value) < 0.05 ? "0.0" : value.toFixed(1);
+}
+
+function labText(lab) {
+  return lab
+    ? "L* " + labNumber(lab.l) + ", a* " + labNumber(lab.a) +
+      ", b* " + labNumber(lab.b)
+    : "--";
+}
+
+function setLabDisplay(lab, source) {
+  elements.labL.textContent = labNumber(lab?.l);
+  elements.labA.textContent = labNumber(lab?.a);
+  elements.labB.textContent = labNumber(lab?.b);
+
+  if (!lab) {
+    elements.labStatus.textContent = "等待样品区域";
+  } else if (source === "corrected") {
+    elements.labStatus.textContent = "基于校正RGB";
+  } else {
+    elements.labStatus.textContent = "基于原始RGB";
+  }
+}
+
 function recalculateResults() {
-  const sample = state.rois.sample ? meanRgb(state.rois.sample) : null;
+  const sample = state.rois.sample
+    ? meanRgb(state.rois.sample, state.sampleShape)
+    : null;
   const white = state.rois.white ? meanRgb(state.rois.white) : null;
   const dark = state.rois.dark ? meanRgb(state.rois.dark) : null;
   const corrected = correctedRgb(sample, white, dark);
+  const labSource = corrected ? "corrected" : sample ? "raw" : null;
+  const lab = rgbToLab(corrected || sample);
 
-  state.results = { sample, white, dark, corrected };
+  state.results = { sample, white, dark, corrected, lab, labSource };
 
   elements.sampleRoiValue.textContent = sample ? rgbText(sample) : "未选择";
   elements.whiteRoiValue.textContent = white ? rgbText(white) : "未选择";
   elements.darkRoiValue.textContent = dark ? rgbText(dark) : "未选择";
   elements.samplePixelCount.textContent = sample
-    ? `${sample.width} × ${sample.height} px`
+    ? state.sampleShape === "circle"
+      ? "圆形 · " + sample.count.toLocaleString() + " px"
+      : sample.width + " × " + sample.height + " px"
     : "--";
 
   setRgbDisplay(
@@ -359,6 +504,7 @@ function recalculateResults() {
     elements.correctedRgbText,
     elements.correctedSwatch
   );
+  setLabDisplay(lab, labSource);
 
   if (!white) {
     elements.correctionStatus.textContent = "需要白板区域";
@@ -386,6 +532,24 @@ function selectRoiMode(mode) {
   drawCanvas();
 }
 
+function selectSampleShape(shape) {
+  if (shape !== "rect" && shape !== "circle") {
+    return;
+  }
+
+  state.sampleShape = shape;
+  if (shape === "circle" && state.rois.sample) {
+    state.rois.sample = inscribedSquare(state.rois.sample);
+  }
+  elements.sampleShapeButtons.forEach((button) => {
+    const selected = button.dataset.sampleShape === shape;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  drawCanvas();
+  recalculateResults();
+}
+
 function startRoiDrag(event) {
   if (!state.imageLoaded) {
     return;
@@ -396,12 +560,15 @@ function startRoiDrag(event) {
   const point = eventCanvasPoint(event);
   state.dragStart = point;
   state.dragging = true;
-  state.rois[state.activeMode] = {
-    x1: point.x,
-    y1: point.y,
-    x2: point.x,
-    y2: point.y
-  };
+  state.rois[state.activeMode] =
+    state.activeMode === "sample" && state.sampleShape === "circle"
+      ? circleRectFromCenter(point, point)
+      : {
+          x1: point.x,
+          y1: point.y,
+          x2: point.x,
+          y2: point.y
+        };
   drawCanvas();
 }
 
@@ -411,9 +578,13 @@ function moveRoiDrag(event) {
   }
 
   const point = eventCanvasPoint(event);
-  const roi = state.rois[state.activeMode];
-  roi.x2 = point.x;
-  roi.y2 = point.y;
+  if (state.activeMode === "sample" && state.sampleShape === "circle") {
+    state.rois.sample = circleRectFromCenter(state.dragStart, point);
+  } else {
+    const roi = state.rois[state.activeMode];
+    roi.x2 = point.x;
+    roi.y2 = point.y;
+  }
   drawCanvas();
 }
 
@@ -432,7 +603,13 @@ function finishRoiDrag(event) {
     point.y - state.dragStart.y
   );
 
-  if (moved < minimumSide) {
+  if (state.activeMode === "sample" && state.sampleShape === "circle") {
+    state.rois.sample = circleRectFromCenter(
+      state.dragStart,
+      point,
+      moved < minimumSide ? minimumSide : 1
+    );
+  } else if (moved < minimumSide) {
     state.rois[state.activeMode] = normalizedRect({
       x1: point.x - minimumSide,
       y1: point.y - minimumSide,
@@ -900,8 +1077,11 @@ function createRecord() {
       ? { r: results.dark.r, g: results.dark.g, b: results.dark.b }
       : null,
     corrected: results.corrected,
+    lab: results.lab
+      ? { l: results.lab.l, a: results.lab.a, b: results.lab.b }
+      : null,
+    sampleShape: state.sampleShape,
     samplePixels: results.sample ? results.sample.count : null,
-    cuPpm: nullableNumber(elements.cuConcentration.value),
     lightSource: elements.lightSource.value,
     lightCct: nullableNumber(elements.lightCct.value),
     lightBrightness: nullableNumber(elements.lightBrightness.value),
@@ -958,9 +1138,12 @@ function renderHistory() {
   for (const record of state.records) {
     const row = document.createElement("tr");
     addCell(row, record.localTime);
-    addCell(row, record.cuPpm ?? "--");
     addCell(row, rgbText(record.raw));
     addCell(row, record.corrected ? rgbText(record.corrected) : "--");
+    addCell(
+      row,
+      labText(record.lab || rgbToLab(record.corrected || record.raw))
+    );
     addCell(row, record.lightSource || "--");
     addCell(row, record.lightCct ? `${record.lightCct} K` : "--");
     addCell(
@@ -1036,8 +1219,11 @@ function exportCsv() {
     "校正R",
     "校正G",
     "校正B",
+    "L*",
+    "a*",
+    "b*",
+    "样品区域形状",
     "样品像素数",
-    "Cu浓度（ppm）",
     "光源",
     "标称色温（K）",
     "LED PWM亮度（%）",
@@ -1073,8 +1259,11 @@ function exportCsv() {
     record.corrected?.r,
     record.corrected?.g,
     record.corrected?.b,
+    (record.lab || rgbToLab(record.corrected || record.raw))?.l,
+    (record.lab || rgbToLab(record.corrected || record.raw))?.a,
+    (record.lab || rgbToLab(record.corrected || record.raw))?.b,
+    record.sampleShape === "circle" ? "圆形" : "矩形",
     record.samplePixels,
-    record.cuPpm,
     record.lightSource,
     record.lightCct,
     record.lightBrightness,
@@ -1139,6 +1328,11 @@ elements.galleryInput.addEventListener("change", (event) => {
 });
 elements.roiModeButtons.forEach((button) => {
   button.addEventListener("click", () => selectRoiMode(button.dataset.roiMode));
+});
+elements.sampleShapeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    selectSampleShape(button.dataset.sampleShape);
+  });
 });
 elements.resetRoiButton.addEventListener("click", resetCurrentRoi);
 elements.clearRoiButton.addEventListener("click", clearCurrentRoi);

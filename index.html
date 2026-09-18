@@ -48,6 +48,13 @@
               <button class="segment" type="button" data-roi-mode="white" aria-pressed="false">白板</button>
               <button class="segment" type="button" data-roi-mode="dark" aria-pressed="false">暗场</button>
             </div>
+            <div class="shape-control">
+              <span>样品形状</span>
+              <div class="segmented shape-segmented" role="group" aria-label="选择样品区域形状">
+                <button class="segment active" type="button" data-sample-shape="rect" aria-pressed="true">矩形</button>
+                <button class="segment" type="button" data-sample-shape="circle" aria-pressed="false">圆形</button>
+              </div>
+            </div>
             <button id="resetRoiButton" class="button secondary compact" type="button" disabled>重置当前区域</button>
             <button id="clearRoiButton" class="button secondary compact" type="button" disabled>清除当前区域</button>
           </div>
@@ -92,6 +99,18 @@
             </div>
           </div>
 
+          <div class="result-block">
+            <div class="result-heading">
+              <h3>CIELAB（D65）</h3>
+              <span id="labStatus">等待样品区域</span>
+            </div>
+            <div class="rgb-values lab-values">
+              <div class="rgb-channel lab-lightness"><span>L*</span><strong id="labL">--</strong></div>
+              <div class="rgb-channel lab-a"><span>a*</span><strong id="labA">--</strong></div>
+              <div class="rgb-channel lab-b"><span>b*</span><strong id="labB">--</strong></div>
+            </div>
+          </div>
+
           <details class="metadata-block" open>
             <summary>照片参数</summary>
             <dl id="metadataList" class="metadata-list">
@@ -111,10 +130,6 @@
       </div>
 
       <form id="experimentForm" class="experiment-form">
-        <label>
-          <span>Cu浓度（ppm）</span>
-          <input id="cuConcentration" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="0.0000">
-        </label>
         <label>
           <span>光源</span>
           <select id="lightSource">
@@ -163,9 +178,9 @@
           <thead>
             <tr>
               <th>时间</th>
-              <th>Cu（ppm）</th>
               <th>原始RGB</th>
               <th>校正RGB</th>
+              <th>LAB</th>
               <th>光源</th>
               <th>色温</th>
               <th>亮度</th>
