@@ -49,12 +49,13 @@
               <button class="segment" type="button" data-roi-mode="dark" aria-pressed="false">暗场</button>
             </div>
             <div class="shape-control">
-              <span>样品形状</span>
-              <div class="segmented shape-segmented" role="group" aria-label="选择样品区域形状">
-                <button class="segment active" type="button" data-sample-shape="rect" aria-pressed="true">矩形</button>
-                <button class="segment" type="button" data-sample-shape="circle" aria-pressed="false">圆形</button>
+              <span>当前选区形状</span>
+              <div class="segmented shape-segmented" role="group" aria-label="选择当前区域形状">
+                <button class="segment active" type="button" data-roi-shape="rect" aria-pressed="true">矩形</button>
+                <button class="segment" type="button" data-roi-shape="circle" aria-pressed="false">圆形</button>
               </div>
             </div>
+            <button id="autoDetectSampleButton" class="button secondary compact" type="button" aria-pressed="false" disabled>自动选取样品</button>
             <button id="resetRoiButton" class="button secondary compact" type="button" disabled>重置当前区域</button>
             <button id="clearRoiButton" class="button secondary compact" type="button" disabled>清除当前区域</button>
           </div>

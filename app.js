@@ -13,8 +13,9 @@ const elements = {
   emptyState: document.getElementById("emptyState"),
   resetRoiButton: document.getElementById("resetRoiButton"),
   clearRoiButton: document.getElementById("clearRoiButton"),
+  autoDetectSampleButton: document.getElementById("autoDetectSampleButton"),
   roiModeButtons: [...document.querySelectorAll("[data-roi-mode]")],
-  sampleShapeButtons: [...document.querySelectorAll("[data-sample-shape]")],
+  roiShapeButtons: [...document.querySelectorAll("[data-roi-shape]")],
   sampleRoiValue: document.getElementById("sampleRoiValue"),
   whiteRoiValue: document.getElementById("whiteRoiValue"),
   darkRoiValue: document.getElementById("darkRoiValue"),
@@ -62,7 +63,11 @@ const state = {
   file: null,
   metadata: {},
   activeMode: "sample",
-  sampleShape: "rect",
+  roiShapes: {
+    sample: "rect",
+    white: "rect",
+    dark: "rect"
+  },
   rois: {
     sample: null,
     white: null,
@@ -70,6 +75,7 @@ const state = {
   },
   dragging: false,
   dragStart: null,
+  autoDetectPending: false,
   installPrompt: null,
   records: loadJson(HISTORY_KEY, [])
 };
@@ -246,30 +252,33 @@ function drawRoi(mode, roi) {
   const height = rect.y2 - rect.y1;
 
   drawingContext.save();
+  const strokeSelection = () => {
+    if (state.roiShapes[mode] === "circle") {
+      drawingContext.beginPath();
+      drawingContext.ellipse(
+        x + width / 2,
+        y + height / 2,
+        width / 2,
+        height / 2,
+        0,
+        0,
+        Math.PI * 2
+      );
+      drawingContext.stroke();
+    } else {
+      drawingContext.strokeRect(x, y, width, height);
+    }
+  };
 
   if (mode === "white") {
     drawingContext.strokeStyle = cssColor("--selection-dark");
     drawingContext.lineWidth = lineWidth + 3 * scale;
-    drawingContext.strokeRect(x, y, width, height);
+    strokeSelection();
   }
 
   drawingContext.strokeStyle = colors[mode];
   drawingContext.lineWidth = lineWidth;
-  if (mode === "sample" && state.sampleShape === "circle") {
-    drawingContext.beginPath();
-    drawingContext.ellipse(
-      x + width / 2,
-      y + height / 2,
-      width / 2,
-      height / 2,
-      0,
-      0,
-      Math.PI * 2
-    );
-    drawingContext.stroke();
-  } else {
-    drawingContext.strokeRect(x, y, width, height);
-  }
+  strokeSelection();
 
   const fontSize = Math.max(16, Math.round(16 * scale));
   drawingContext.font = `600 ${fontSize}px sans-serif`;
@@ -363,6 +372,176 @@ function meanRgb(rect, shape = "rect") {
     count,
     width,
     height
+  };
+}
+
+function colorDistanceAt(pixels, width, height, x1, y1, x2, y2) {
+  const firstX = clamp(Math.round(x1), 0, width - 1);
+  const firstY = clamp(Math.round(y1), 0, height - 1);
+  const secondX = clamp(Math.round(x2), 0, width - 1);
+  const secondY = clamp(Math.round(y2), 0, height - 1);
+  const first = (firstY * width + firstX) * 4;
+  const second = (secondY * width + secondX) * 4;
+
+  return (
+    Math.abs(pixels[first] - pixels[second]) +
+    Math.abs(pixels[first + 1] - pixels[second + 1]) +
+    Math.abs(pixels[first + 2] - pixels[second + 2])
+  ) / 3;
+}
+
+function circularBoundaryScore(pixels, width, height, centerX, centerY, radius) {
+  const scores = [];
+  const sampleCount = 32;
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const angle = index * Math.PI * 2 / sampleCount;
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    const near = colorDistanceAt(
+      pixels,
+      width,
+      height,
+      centerX + cosine * radius * 0.88,
+      centerY + sine * radius * 0.88,
+      centerX + cosine * radius * 1.1,
+      centerY + sine * radius * 1.1
+    );
+    const broad = colorDistanceAt(
+      pixels,
+      width,
+      height,
+      centerX + cosine * radius * 0.62,
+      centerY + sine * radius * 0.62,
+      centerX + cosine * radius * 1.28,
+      centerY + sine * radius * 1.28
+    );
+    scores.push(near * 0.72 + broad * 0.28);
+  }
+
+  scores.sort((first, second) => first - second);
+  const start = Math.floor(sampleCount * 0.18);
+  const end = Math.ceil(sampleCount * 0.82);
+  const selected = scores.slice(start, end);
+  return selected.reduce((sum, value) => sum + value, 0) / selected.length;
+}
+
+function detectCircularSample(point) {
+  const width = sourceCanvas.width;
+  const height = sourceCanvas.height;
+  if (!width || !height) {
+    return null;
+  }
+
+  const minimumDimension = Math.min(width, height);
+  const minimumRadius = Math.max(8, minimumDimension * 0.018);
+  const maximumRadius = Math.max(
+    minimumRadius + 2,
+    minimumDimension * 0.05
+  );
+  const searchExtent = Math.min(
+    maximumRadius * 0.65,
+    minimumDimension * 0.055
+  );
+  const coarseStep = Math.max(2, minimumDimension / 180);
+  const pixels = sourceContext.getImageData(0, 0, width, height).data;
+  let best = null;
+
+  const consider = (centerX, centerY, radius) => {
+    const distanceFromTap = Math.hypot(
+      point.x - centerX,
+      point.y - centerY
+    );
+    const edgeLimit = Math.min(
+      centerX,
+      width - centerX,
+      centerY,
+      height - centerY
+    ) / 1.3;
+    if (
+      radius < minimumRadius ||
+      radius > maximumRadius ||
+      radius > edgeLimit ||
+      distanceFromTap > radius * 0.35
+    ) {
+      return;
+    }
+
+    const boundaryScore = circularBoundaryScore(
+      pixels,
+      width,
+      height,
+      centerX,
+      centerY,
+      radius
+    );
+    const score = boundaryScore / (1 + radius / maximumRadius);
+    if (!best || score > best.score) {
+      best = { centerX, centerY, radius, score, boundaryScore };
+    }
+  };
+
+  for (
+    let centerY = point.y - searchExtent;
+    centerY <= point.y + searchExtent;
+    centerY += coarseStep
+  ) {
+    for (
+      let centerX = point.x - searchExtent;
+      centerX <= point.x + searchExtent;
+      centerX += coarseStep
+    ) {
+      for (
+        let radius = minimumRadius;
+        radius <= maximumRadius;
+        radius += coarseStep
+      ) {
+        consider(centerX, centerY, radius);
+      }
+    }
+  }
+
+  if (!best) {
+    return null;
+  }
+
+  let refinementStep = coarseStep / 2;
+  for (let pass = 0; pass < 2; pass += 1) {
+    const origin = { ...best };
+    for (
+      let centerY = origin.centerY - refinementStep * 2;
+      centerY <= origin.centerY + refinementStep * 2;
+      centerY += refinementStep
+    ) {
+      for (
+        let centerX = origin.centerX - refinementStep * 2;
+        centerX <= origin.centerX + refinementStep * 2;
+        centerX += refinementStep
+      ) {
+        for (
+          let radius = origin.radius - refinementStep * 2;
+          radius <= origin.radius + refinementStep * 2;
+          radius += refinementStep
+        ) {
+          consider(centerX, centerY, radius);
+        }
+      }
+    }
+    refinementStep /= 2;
+  }
+
+  if (best.boundaryScore < 6) {
+    return null;
+  }
+
+  return {
+    roi: normalizedRect({
+      x1: best.centerX - best.radius,
+      y1: best.centerY - best.radius,
+      x2: best.centerX + best.radius,
+      y2: best.centerY + best.radius
+    }),
+    score: best.boundaryScore
   };
 }
 
@@ -473,10 +652,14 @@ function setLabDisplay(lab, source) {
 
 function recalculateResults() {
   const sample = state.rois.sample
-    ? meanRgb(state.rois.sample, state.sampleShape)
+    ? meanRgb(state.rois.sample, state.roiShapes.sample)
     : null;
-  const white = state.rois.white ? meanRgb(state.rois.white) : null;
-  const dark = state.rois.dark ? meanRgb(state.rois.dark) : null;
+  const white = state.rois.white
+    ? meanRgb(state.rois.white, state.roiShapes.white)
+    : null;
+  const dark = state.rois.dark
+    ? meanRgb(state.rois.dark, state.roiShapes.dark)
+    : null;
   const corrected = correctedRgb(sample, white, dark);
   const labSource = corrected ? "corrected" : sample ? "raw" : null;
   const lab = rgbToLab(corrected || sample);
@@ -487,7 +670,7 @@ function recalculateResults() {
   elements.whiteRoiValue.textContent = white ? rgbText(white) : "未选择";
   elements.darkRoiValue.textContent = dark ? rgbText(dark) : "未选择";
   elements.samplePixelCount.textContent = sample
-    ? state.sampleShape === "circle"
+    ? state.roiShapes.sample === "circle"
       ? "圆形 · " + sample.count.toLocaleString() + " px"
       : sample.width + " × " + sample.height + " px"
     : "--";
@@ -519,35 +702,79 @@ function recalculateResults() {
   elements.saveRecordButton.disabled = !sample;
   elements.resetRoiButton.disabled = !state.imageLoaded;
   elements.clearRoiButton.disabled = !state.rois[state.activeMode];
+  elements.autoDetectSampleButton.disabled = !state.imageLoaded;
 }
 
 function selectRoiMode(mode) {
+  if (!Object.prototype.hasOwnProperty.call(state.rois, mode)) {
+    return;
+  }
+
+  if (mode !== "sample") {
+    setAutoDetectPending(false);
+  }
   state.activeMode = mode;
   elements.roiModeButtons.forEach((button) => {
     const selected = button.dataset.roiMode === mode;
     button.classList.toggle("active", selected);
     button.setAttribute("aria-pressed", String(selected));
   });
+  elements.roiShapeButtons.forEach((button) => {
+    const selected = button.dataset.roiShape === state.roiShapes[mode];
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  elements.autoDetectSampleButton.hidden = mode !== "sample";
   elements.clearRoiButton.disabled = !state.rois[mode];
   drawCanvas();
 }
 
-function selectSampleShape(shape) {
+function selectRoiShape(shape) {
   if (shape !== "rect" && shape !== "circle") {
     return;
   }
 
-  state.sampleShape = shape;
-  if (shape === "circle" && state.rois.sample) {
-    state.rois.sample = inscribedSquare(state.rois.sample);
+  state.roiShapes[state.activeMode] = shape;
+  if (shape === "circle" && state.rois[state.activeMode]) {
+    state.rois[state.activeMode] = inscribedSquare(
+      state.rois[state.activeMode]
+    );
   }
-  elements.sampleShapeButtons.forEach((button) => {
-    const selected = button.dataset.sampleShape === shape;
+  elements.roiShapeButtons.forEach((button) => {
+    const selected = button.dataset.roiShape === shape;
     button.classList.toggle("active", selected);
     button.setAttribute("aria-pressed", String(selected));
   });
+  if (shape !== "circle") {
+    setAutoDetectPending(false);
+  }
   drawCanvas();
   recalculateResults();
+}
+
+function setAutoDetectPending(pending) {
+  state.autoDetectPending = Boolean(pending);
+  elements.autoDetectSampleButton.textContent = pending
+    ? "请点选目标样品"
+    : "自动选取样品";
+  elements.autoDetectSampleButton.classList.toggle("primary", pending);
+  elements.autoDetectSampleButton.classList.toggle("secondary", !pending);
+  elements.autoDetectSampleButton.setAttribute(
+    "aria-pressed",
+    String(Boolean(pending))
+  );
+}
+
+function beginAutoDetect() {
+  if (!state.imageLoaded) {
+    return;
+  }
+
+  selectRoiMode("sample");
+  selectRoiShape("circle");
+  setAutoDetectPending(true);
+  elements.imageStatus.textContent =
+    (state.file ? state.file.name + " · " : "") + "请点选目标样品";
 }
 
 function startRoiDrag(event) {
@@ -561,7 +788,7 @@ function startRoiDrag(event) {
   state.dragStart = point;
   state.dragging = true;
   state.rois[state.activeMode] =
-    state.activeMode === "sample" && state.sampleShape === "circle"
+    state.roiShapes[state.activeMode] === "circle"
       ? circleRectFromCenter(point, point)
       : {
           x1: point.x,
@@ -578,8 +805,11 @@ function moveRoiDrag(event) {
   }
 
   const point = eventCanvasPoint(event);
-  if (state.activeMode === "sample" && state.sampleShape === "circle") {
-    state.rois.sample = circleRectFromCenter(state.dragStart, point);
+  if (state.roiShapes[state.activeMode] === "circle") {
+    state.rois[state.activeMode] = circleRectFromCenter(
+      state.dragStart,
+      point
+    );
   } else {
     const roi = state.rois[state.activeMode];
     roi.x2 = point.x;
@@ -602,9 +832,19 @@ function finishRoiDrag(event) {
     point.x - state.dragStart.x,
     point.y - state.dragStart.y
   );
+  const automaticRequest =
+    state.autoDetectPending &&
+    state.activeMode === "sample" &&
+    moved < minimumSide;
+  let automaticDetection = null;
 
-  if (state.activeMode === "sample" && state.sampleShape === "circle") {
-    state.rois.sample = circleRectFromCenter(
+  if (automaticRequest) {
+    automaticDetection = detectCircularSample(point);
+    state.rois.sample = automaticDetection
+      ? automaticDetection.roi
+      : circleRectFromCenter(point, point, minimumSide);
+  } else if (state.roiShapes[state.activeMode] === "circle") {
+    state.rois[state.activeMode] = circleRectFromCenter(
       state.dragStart,
       point,
       moved < minimumSide ? minimumSide : 1
@@ -626,6 +866,23 @@ function finishRoiDrag(event) {
 
   state.dragging = false;
   state.dragStart = null;
+  setAutoDetectPending(false);
+  if (automaticRequest) {
+    showToast(
+      automaticDetection
+        ? "已自动贴合圆形样品，可拖动重新选取"
+        : "未识别到稳定圆边界，请拖动手动选取"
+    );
+  }
+  if (state.file) {
+    const labels = {
+      sample: "样品",
+      white: "白板",
+      dark: "暗场"
+    };
+    elements.imageStatus.textContent =
+      state.file.name + " · 拖动选择" + labels[state.activeMode] + "区域";
+  }
   drawCanvas();
   recalculateResults();
 }
@@ -633,6 +890,7 @@ function finishRoiDrag(event) {
 function cancelRoiDrag() {
   state.dragging = false;
   state.dragStart = null;
+  setAutoDetectPending(false);
   drawCanvas();
   recalculateResults();
 }
@@ -642,12 +900,14 @@ function resetCurrentRoi() {
     return;
   }
 
+  setAutoDetectPending(false);
   state.rois[state.activeMode] = defaultRoi(state.activeMode);
   drawCanvas();
   recalculateResults();
 }
 
 function clearCurrentRoi() {
+  setAutoDetectPending(false);
   state.rois[state.activeMode] = null;
   drawCanvas();
   recalculateResults();
@@ -975,6 +1235,7 @@ async function handleImageFile(file) {
     return;
   }
 
+  setAutoDetectPending(false);
   if (!file.type.startsWith("image/")) {
     showToast("请选择照片文件");
     return;
@@ -1080,7 +1341,7 @@ function createRecord() {
     lab: results.lab
       ? { l: results.lab.l, a: results.lab.a, b: results.lab.b }
       : null,
-    sampleShape: state.sampleShape,
+    sampleShape: state.roiShapes.sample,
     samplePixels: results.sample ? results.sample.count : null,
     lightSource: elements.lightSource.value,
     lightCct: nullableNumber(elements.lightCct.value),
@@ -1329,11 +1590,12 @@ elements.galleryInput.addEventListener("change", (event) => {
 elements.roiModeButtons.forEach((button) => {
   button.addEventListener("click", () => selectRoiMode(button.dataset.roiMode));
 });
-elements.sampleShapeButtons.forEach((button) => {
+elements.roiShapeButtons.forEach((button) => {
   button.addEventListener("click", () => {
-    selectSampleShape(button.dataset.sampleShape);
+    selectRoiShape(button.dataset.roiShape);
   });
 });
+elements.autoDetectSampleButton.addEventListener("click", beginAutoDetect);
 elements.resetRoiButton.addEventListener("click", resetCurrentRoi);
 elements.clearRoiButton.addEventListener("click", clearCurrentRoi);
 elements.canvas.addEventListener("pointerdown", startRoiDrag);

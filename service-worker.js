@@ -1,4 +1,4 @@
-const CACHE_NAME = "film-rgb-v3";
+const CACHE_NAME = "film-rgb-v4";
 const APP_FILES = [
   "./",
   "./index.html",
